@@ -9,7 +9,7 @@ from torchvision import transforms
 
 sys.path.append(os.getcwd())
 
-from slot_attention.data import CLEVRDataModule
+from slot_attention.data import ComMnistDataModule
 from slot_attention.method import SlotAttentionMethod
 from slot_attention.model import SlotAttentionModel
 from slot_attention.params import SlotAttentionParams
@@ -30,7 +30,7 @@ def main(params: Optional[SlotAttentionParams] = None):
         if params.num_val_images:
             print(f"INFO: restricting the validation dataset size to `num_val_images`: {params.num_val_images}")
 
-    clevr_transforms = transforms.Compose(
+    commnist_transforms = transforms.Compose(
         [
             transforms.ToTensor(),
             transforms.Lambda(rescale),  # rescale between -1 and 1
@@ -38,18 +38,18 @@ def main(params: Optional[SlotAttentionParams] = None):
         ]
     )
 
-    clevr_datamodule = CLEVRDataModule(
+    commnist_datamodule = ComMnistDataModule(
         data_root=params.data_root,
         max_n_objects=params.num_slots - 1,
         train_batch_size=params.batch_size,
         val_batch_size=params.val_batch_size,
-        clevr_transforms=clevr_transforms,
+        transforms=commnist_transforms,
         num_train_images=params.num_train_images,
         num_val_images=params.num_val_images,
         num_workers=params.num_workers,
     )
 
-    print(f"Training set size (images must have {params.num_slots - 1} objects):", len(clevr_datamodule.train_dataset))
+    print(f"Training set size (images must have {params.num_slots - 1} objects):", len(commnist_datamodule.train_dataset))
 
     model = SlotAttentionModel(
         resolution=params.resolution,
@@ -58,16 +58,16 @@ def main(params: Optional[SlotAttentionParams] = None):
         empty_cache=params.empty_cache,
     )
 
-    method = SlotAttentionMethod(model=model, datamodule=clevr_datamodule, params=params)
+    method = SlotAttentionMethod(model=model, datamodule=commnist_datamodule, params=params)
 
-    logger_name = "4mnist_rot"
+    logger_name = "commnist_rot_tsla"
     logger = pl_loggers.WandbLogger(project="slot_attention", name=logger_name)
 
     trainer = Trainer(
         logger=logger if params.is_logger_enabled else False,
-        accelerator="ddp" if params.gpus > 1 else None,
+        accelerator="ddp" if len(params.gpus) > 1 else None,
         num_sanity_val_steps=params.num_sanity_val_steps,
-        gpus=params.gpus,
+        gpus=params.gpus if len(params.gpus) > 0 else None,
         max_epochs=params.max_epochs,
         log_every_n_steps=50,
         callbacks=[LearningRateMonitor("step"), ImageLogCallback(),] if params.is_logger_enabled else [],

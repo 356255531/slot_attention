@@ -1,7 +1,10 @@
 checkpoints/
 checkpoint_details.json
 .idea/
-data/
+train/
+test/
+val/
+*.amat
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

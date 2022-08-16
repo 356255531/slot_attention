@@ -8,7 +8,7 @@ from slot_attention.utils import Tensor
 from slot_attention.utils import assert_shape
 from slot_attention.utils import build_grid
 from slot_attention.utils import conv_transpose_out_shape
-from slot_attention.utils import rotate
+from slot_attention.utils import group_transformation
 
 
 class SlotAttention(nn.Module):
@@ -201,10 +201,10 @@ class SlotAttentionModel(nn.Module):
             mlp_hidden_size=128,
         )
 
-        self.rot_mlp = nn.Sequential(
+        self.t_params_mlp = nn.Sequential(
             nn.Linear(self.slot_size, 2 * self.slot_size),
             nn.ReLU(),
-            nn.Linear(self.slot_size * 2, 2),
+            nn.Linear(self.slot_size * 2, 4),
         )
 
     def forward(self, x):
@@ -224,7 +224,7 @@ class SlotAttentionModel(nn.Module):
         slots = self.slot_attention(encoder_out)
         assert_shape(slots.size(), (batch_size, self.num_slots, self.slot_size * 2))
         # `slots` has shape: [batch_size, num_slots, slot_size].
-        slots, rot = slots[:, :, :self.slot_size], self.rot_mlp(slots[:, :, self.slot_size:])
+        slots, params = slots[:, :, :self.slot_size], self.t_params_mlp(slots[:, :, self.slot_size:])
         batch_size, num_slots, slot_size = slots.shape
 
         slots = slots.view(batch_size * num_slots, slot_size, 1, 1)
@@ -237,9 +237,9 @@ class SlotAttentionModel(nn.Module):
 
         out = out.view(batch_size, num_slots, num_channels, height, width)
         recons = out[:, :, :num_channels, :, :]
-        rot_recons = rotate(recons, rot)
-        recon_combined = torch.sum(recons, dim=1)
-        return recon_combined, recons, rot_recons, slots
+        transformed_recons = group_transformation(recons, params)
+        recon_combined = torch.sum(transformed_recons, dim=1)
+        return recon_combined, recons, transformed_recons, slots
 
     def loss_function(self, input):
         recon_combined, recons, rot_recons, slots = self.forward(input)

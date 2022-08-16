@@ -30,9 +30,9 @@ class SlotAttentionMethod(pl.LightningModule):
         perm = torch.randperm(self.params.batch_size)
         idx = perm[: self.params.n_samples]
         batch = next(iter(dl))[idx]
-        if self.params.gpus > 0:
+        if len(self.params.gpus) > 0:
             batch = batch.to(self.device)
-        recon_combined, recons, rot_recons, slots = self.model.forward(batch)
+        recon_combined, recons, transformed_recons, slots = self.model.forward(batch)
 
         # combine images in a nice way so we can display all outputs in one grid, output rescaled to be between 0 and 1
         out = to_rgb_from_tensor(
@@ -41,7 +41,7 @@ class SlotAttentionMethod(pl.LightningModule):
                     batch.unsqueeze(1),  # original images
                     recon_combined.unsqueeze(1),  # reconstructions
                     recons,  # each slot
-                    rot_recons
+                    transformed_recons
                 ],
                 dim=1,
             )

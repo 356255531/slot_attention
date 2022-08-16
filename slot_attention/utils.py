@@ -32,23 +32,30 @@ def build_grid(resolution):
     return torch.cat([grid, 1.0 - grid], dim=-1)
 
 
-def rotate(images, param):
+def group_transformation(images, param):
     bb, s, c, h, w = images.shape
     b = bb * s
     images = images.reshape(bb * s, c, h, w)
-    param = param.reshape(bb * s, 2)
+    param = param.reshape(bb * s, 4)
 
-    param = F.normalize(param, p=2, dim=1)
-    param_ortho = torch.stack([-param[:, 1], param[:, 0]], dim=-1)
-    param = torch.stack([param, param_ortho], dim=-1)
+    rot_param, trans_param = param[:, :2], param[:, 2: 4]
 
+    # # Rotate image
+    rot = F.normalize(rot_param, p=2, dim=1)
+    rot_ortho = torch.stack([-rot[:, 1], rot[:, 0]], dim=-1)
+    rot = torch.stack([rot, rot_ortho], dim=-1)
     center = torch.ones((b, 2, 1), device=images.device) * (h - 1) / 2
     eye_mat = torch.eye(2, device=images.device).reshape((1, 2, 2)).expand(b, -1, -1)
-    offset = torch.bmm(eye_mat - param, center)
-
-    affine_mat = torch.cat([param, offset], dim=-1)
-
+    offset = torch.bmm(eye_mat - rot, center)
+    affine_mat = torch.cat([rot, offset], dim=-1)
     images = tgm.warp_affine(images, affine_mat, (h, w), padding_mode='border')
+
+    # translate the image
+    trans = torch.sigmoid(trans_param) - 0.5
+    trans[:, 0] *= 0.5 * h
+    trans[:, 1] *= 0.5 * w
+    images = tgm.translate(images, trans, padding_mode='border')
+
     images = images.reshape(bb, s, c, h, w)
 
     return images
