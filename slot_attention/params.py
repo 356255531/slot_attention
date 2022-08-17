@@ -24,6 +24,6 @@ class SlotAttentionParams:
     is_logger_enabled: bool = True
     is_verbose: bool = True
     num_workers: int = 4
-    n_samples: int = 5
+    n_samples: int = 30
     warmup_steps_pct: float = 0.02
     decay_steps_pct: float = 0.2

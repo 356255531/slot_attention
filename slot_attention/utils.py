@@ -25,7 +25,7 @@ def assert_shape(actual: Union[torch.Size, Tuple[int, ...]], expected: Tuple[int
 
 def build_grid(resolution):
     ranges = [torch.linspace(0.0, 1.0, steps=res) for res in resolution]
-    grid = torch.meshgrid(*ranges)
+    grid = torch.meshgrid(*ranges, indexing="ij")
     grid = torch.stack(grid, dim=-1)
     grid = torch.reshape(grid, [resolution[0], resolution[1], -1])
     grid = grid.unsqueeze(0)
@@ -41,14 +41,14 @@ def group_transformation(images, param):
     rot_param, trans_param = param[:, :2], param[:, 2: 4]
 
     # # Rotate image
-    rot = F.normalize(rot_param, p=2, dim=1)
-    rot_ortho = torch.stack([-rot[:, 1], rot[:, 0]], dim=-1)
-    rot = torch.stack([rot, rot_ortho], dim=-1)
-    center = torch.ones((b, 2, 1), device=images.device) * (h - 1) / 2
-    eye_mat = torch.eye(2, device=images.device).reshape((1, 2, 2)).expand(b, -1, -1)
-    offset = torch.bmm(eye_mat - rot, center)
-    affine_mat = torch.cat([rot, offset], dim=-1)
-    images = tgm.warp_affine(images, affine_mat, (h, w), padding_mode='border')
+    # rot = F.normalize(rot_param, p=2, dim=1)
+    # rot_ortho = torch.stack([-rot[:, 1], rot[:, 0]], dim=-1)
+    # rot = torch.stack([rot, rot_ortho], dim=-1)
+    # center = torch.ones((b, 2, 1), device=images.device) * (h - 1) / 2
+    # eye_mat = torch.eye(2, device=images.device).reshape((1, 2, 2)).expand(b, -1, -1)
+    # offset = torch.bmm(eye_mat - rot, center)
+    # affine_mat = torch.cat([rot, offset], dim=-1)
+    # images = tgm.warp_affine(images, affine_mat, (h, w), padding_mode='border')
 
     # translate the image
     trans = torch.sigmoid(trans_param) - 0.5

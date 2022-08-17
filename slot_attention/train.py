@@ -1,23 +1,18 @@
 from typing import Optional
-import sys
-import os
+
+from torch.utils.data import DataLoader
 
 import pytorch_lightning.loggers as pl_loggers
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import LearningRateMonitor
-from torchvision import transforms
 
-sys.path.append(os.getcwd())
-
-from slot_attention.data import ComMnistDataModule
-from slot_attention.method import SlotAttentionMethod
+from slot_attention.data import ComMnistDataset, ComMnistTransforms
 from slot_attention.model import SlotAttentionModel
 from slot_attention.params import SlotAttentionParams
 from slot_attention.utils import ImageLogCallback
-from slot_attention.utils import rescale
 
 
-def main(params: Optional[SlotAttentionParams] = None):
+def main(logger_name, params: Optional[SlotAttentionParams] = None):
     if params is None:
         params = SlotAttentionParams()
 
@@ -30,37 +25,47 @@ def main(params: Optional[SlotAttentionParams] = None):
         if params.num_val_images:
             print(f"INFO: restricting the validation dataset size to `num_val_images`: {params.num_val_images}")
 
-    commnist_transforms = transforms.Compose(
-        [
-            transforms.ToTensor(),
-            transforms.Lambda(rescale),  # rescale between -1 and 1
-            transforms.Resize(params.resolution),
-        ]
-    )
+    # Define dataset
+    commnist_transforms = ComMnistTransforms(params.resolution)
 
-    commnist_datamodule = ComMnistDataModule(
-        data_root=params.data_root,
-        max_n_objects=params.num_slots - 1,
-        train_batch_size=params.batch_size,
-        val_batch_size=params.val_batch_size,
-        transforms=commnist_transforms,
-        num_train_images=params.num_train_images,
-        num_val_images=params.num_val_images,
+    train_dataset = ComMnistDataset(
+            data_root=params.data_root,
+            transforms=commnist_transforms,
+            split="train",
+        )
+    train_dataloader = DataLoader(
+        train_dataset,
+        batch_size=params.batch_size,
+        shuffle=True,
         num_workers=params.num_workers,
+        pin_memory=True,
     )
 
-    print(f"Training set size (images must have {params.num_slots - 1} objects):", len(commnist_datamodule.train_dataset))
+    val_dataset = ComMnistDataset(
+            data_root=params.data_root,
+            transforms=commnist_transforms,
+            split="val",
+        )
+    val_dataloader = DataLoader(
+        val_dataset,
+        batch_size=params.val_batch_size,
+        shuffle=False,
+        num_workers=params.num_workers,
+        pin_memory=True,
+    )
+
+    print(f"Training set size (images must have {params.num_slots - 1} objects):", len(train_dataset))
 
     model = SlotAttentionModel(
         resolution=params.resolution,
         num_slots=params.num_slots,
         num_iterations=params.num_iterations,
+        train_dataloader=train_dataloader,
+        val_dataloader=val_dataloader,
         empty_cache=params.empty_cache,
+        params=params,
     )
 
-    method = SlotAttentionMethod(model=model, datamodule=commnist_datamodule, params=params)
-
-    logger_name = "commnist_rot_tsla"
     logger = pl_loggers.WandbLogger(project="slot_attention", name=logger_name)
 
     trainer = Trainer(
@@ -72,8 +77,9 @@ def main(params: Optional[SlotAttentionParams] = None):
         log_every_n_steps=50,
         callbacks=[LearningRateMonitor("step"), ImageLogCallback(),] if params.is_logger_enabled else [],
     )
-    trainer.fit(method)
+    trainer.fit(model, train_dataloader, val_dataloader)
 
 
 if __name__ == "__main__":
-    main()
+    seed = 2020
+    main(f"commnist_rot_tsla_{seed}")

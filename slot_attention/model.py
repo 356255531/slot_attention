@@ -2,13 +2,18 @@ from typing import Tuple
 
 import torch
 from torch import nn
+from torch import optim
 from torch.nn import functional as F
+from torchvision import utils as vutils
+
+import pytorch_lightning as pl
 
 from slot_attention.utils import Tensor
 from slot_attention.utils import assert_shape
 from slot_attention.utils import build_grid
 from slot_attention.utils import conv_transpose_out_shape
 from slot_attention.utils import group_transformation
+from slot_attention.utils import to_rgb_from_tensor
 
 
 class SlotAttention(nn.Module):
@@ -98,29 +103,36 @@ class SlotAttention(nn.Module):
         return slots
 
 
-class SlotAttentionModel(nn.Module):
+class SlotAttentionModel(pl.LightningModule):
     def __init__(
         self,
         resolution: Tuple[int, int],
         num_slots: int,
         num_iterations,
+        train_dataloader,
+        val_dataloader,
         in_channels: int = 3,
         kernel_size: int = 5,
         slot_size: int = 64,
         hidden_dims: Tuple[int, ...] = (64, 64, 64, 64),
         decoder_resolution=(2, 2),
         empty_cache=False,
+        params=None
     ):
         super().__init__()
         self.resolution = resolution
         self.num_slots = num_slots
         self.num_iterations = num_iterations
+        self.train_dataloader = train_dataloader
+        self.val_dataloader = val_dataloader
         self.in_channels = in_channels
         self.kernel_size = kernel_size
         self.slot_size = slot_size
         self.empty_cache = empty_cache
         self.hidden_dims = hidden_dims
         self.decoder_resolution = decoder_resolution
+        self.params = params
+
         self.out_features = self.hidden_dims[-1]
 
         modules = []
@@ -247,6 +259,78 @@ class SlotAttentionModel(nn.Module):
         return {
             "loss": loss,
         }
+
+    def configure_optimizers(self):
+        optimizer = optim.Adam(self.parameters(), lr=self.params.lr, weight_decay=self.params.weight_decay)
+
+        warmup_steps_pct = self.params.warmup_steps_pct
+        decay_steps_pct = self.params.decay_steps_pct
+        total_steps = self.params.max_epochs * len(self.train_dataloader)
+
+        def warm_and_decay_lr_scheduler(step: int):
+            warmup_steps = warmup_steps_pct * total_steps
+            decay_steps = decay_steps_pct * total_steps
+            assert step < total_steps
+            if step < warmup_steps:
+                factor = step / warmup_steps
+            else:
+                factor = 1
+            factor *= self.params.scheduler_gamma ** (step / decay_steps)
+            return factor
+
+        scheduler = optim.lr_scheduler.LambdaLR(optimizer=optimizer, lr_lambda=warm_and_decay_lr_scheduler)
+
+        return (
+            [optimizer],
+            [{"scheduler": scheduler, "interval": "step",}],
+        )
+
+    def training_step(self, batch, batch_idx, optimizer_idx=0):
+        train_loss = self.loss_function(batch)
+        logs = {key: val.item() for key, val in train_loss.items()}
+        self.log_dict(logs, sync_dist=True)
+        return train_loss
+
+    def sample_images(self):
+        dl = self.val_dataloader
+        perm = torch.randperm(self.params.batch_size)
+        idx = perm[: self.params.n_samples]
+        batch = next(iter(dl))[idx]
+        if len(self.params.gpus) > 0:
+            batch = batch.to(self.device)
+        recon_combined, recons, transformed_recons, slots = self.forward(batch)
+
+        # combine images in a nice way so we can display all outputs in one grid, output rescaled to be between 0 and 1
+        out = to_rgb_from_tensor(
+            torch.cat(
+                [
+                    batch.unsqueeze(1),  # original images
+                    recon_combined.unsqueeze(1),  # reconstructions
+                    recons,  # each slot
+                    transformed_recons
+                ],
+                dim=1,
+            )
+        )
+
+        batch_size, num_slots, C, H, W = recons.shape
+        images = vutils.make_grid(
+            out.view(batch_size * out.shape[1], C, H, W).cpu(), normalize=False, nrow=out.shape[1],
+        )
+
+        return images
+
+    def validation_step(self, batch, batch_idx, optimizer_idx=0):
+        val_loss = self.loss_function(batch)
+        return val_loss
+
+    def validation_epoch_end(self, outputs):
+        avg_loss = torch.stack([x["loss"] for x in outputs]).mean()
+        logs = {
+            "avg_val_loss": avg_loss,
+        }
+        self.log_dict(logs, sync_dist=True)
+        print("; ".join([f"{k}: {v.item():.6f}" for k, v in logs.items()]))
 
 
 class SoftPositionEmbed(nn.Module):
