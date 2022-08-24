@@ -1,10 +1,17 @@
 from typing import Optional
+import sys
+import os
+import numpy as np
+import random as rd
 
+import torch
 from torch.utils.data import DataLoader
 
 import pytorch_lightning.loggers as pl_loggers
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import LearningRateMonitor
+
+sys.path.append(os.getcwd())
 
 from slot_attention.data import ComMnistDataset, ComMnistTransforms
 from slot_attention.model import SlotAttentionModel
@@ -70,7 +77,7 @@ def main(logger_name, params: Optional[SlotAttentionParams] = None):
 
     trainer = Trainer(
         logger=logger if params.is_logger_enabled else False,
-        accelerator="ddp" if len(params.gpus) > 1 else None,
+        accelerator="gpu" if len(params.gpus) > 1 else None,
         num_sanity_val_steps=params.num_sanity_val_steps,
         gpus=params.gpus if len(params.gpus) > 0 else None,
         max_epochs=params.max_epochs,
@@ -81,5 +88,8 @@ def main(logger_name, params: Optional[SlotAttentionParams] = None):
 
 
 if __name__ == "__main__":
-    seed = 2020
-    main(f"commnist_rot_tsla_{seed}")
+    seed = 2023
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    rd.seed(seed)
+    main(f"commnist96pixel_nonsymmetric_scale_rot_tsla_{seed}")

@@ -9,12 +9,12 @@ class SlotAttentionParams:
     lr: float = 0.0004
     batch_size: int = 128
     val_batch_size: int = 128
-    resolution: Tuple[int, int] = (32, 32)
-    num_slots: int = 5
+    resolution: Tuple[int, int] = (96, 96)
+    num_slots: int = 3
     num_iterations: int = 3
     data_root: str = "data/commnist/"
     gpus: list = [0]
-    max_epochs: int = 100
+    max_epochs: int = 150
     num_sanity_val_steps: int = 1
     scheduler_gamma: float = 0.5
     weight_decay: float = 0.0
@@ -23,7 +23,7 @@ class SlotAttentionParams:
     empty_cache: bool = True
     is_logger_enabled: bool = True
     is_verbose: bool = True
-    num_workers: int = 4
-    n_samples: int = 30
+    num_workers: int = 8
+    n_samples: int = 40
     warmup_steps_pct: float = 0.02
     decay_steps_pct: float = 0.2

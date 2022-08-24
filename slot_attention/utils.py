@@ -36,19 +36,23 @@ def group_transformation(images, param):
     bb, s, c, h, w = images.shape
     b = bb * s
     images = images.reshape(bb * s, c, h, w)
-    param = param.reshape(bb * s, 4)
+    param = param.reshape(bb * s, 6)
 
-    rot_param, trans_param = param[:, :2], param[:, 2: 4]
+    rot_param, trans_param, scale_param = param[:, :2], param[:, 2: 4], param[:, 4: 6]
 
-    # # Rotate image
-    # rot = F.normalize(rot_param, p=2, dim=1)
-    # rot_ortho = torch.stack([-rot[:, 1], rot[:, 0]], dim=-1)
-    # rot = torch.stack([rot, rot_ortho], dim=-1)
-    # center = torch.ones((b, 2, 1), device=images.device) * (h - 1) / 2
-    # eye_mat = torch.eye(2, device=images.device).reshape((1, 2, 2)).expand(b, -1, -1)
-    # offset = torch.bmm(eye_mat - rot, center)
-    # affine_mat = torch.cat([rot, offset], dim=-1)
-    # images = tgm.warp_affine(images, affine_mat, (h, w), padding_mode='border')
+    # Rotate image
+    rot_ = F.normalize(rot_param, p=2, dim=1)
+    rot_ortho = torch.stack([-rot_[:, 1], rot_[:, 0]], dim=-1)
+    rot = torch.stack([rot_, rot_ortho], dim=-1)
+    center = torch.ones((b, 2, 1), device=images.device) * (h - 1) / 2
+    eye_mat = torch.eye(2, device=images.device).reshape((1, 2, 2)).expand(b, -1, -1)
+    offset = torch.bmm(eye_mat - rot, center)
+    affine_mat = torch.cat([rot, offset], dim=-1)
+    images = tgm.warp_affine(images, affine_mat, (h, w), padding_mode='border')
+
+    # Scale image
+    scale_param = torch.sigmoid(scale_param) * 3
+    images = tgm.scale(images, scale_param, padding_mode="border")
 
     # translate the image
     trans = torch.sigmoid(trans_param) - 0.5

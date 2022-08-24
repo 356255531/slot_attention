@@ -115,7 +115,7 @@ class SlotAttentionModel(pl.LightningModule):
         kernel_size: int = 5,
         slot_size: int = 64,
         hidden_dims: Tuple[int, ...] = (64, 64, 64, 64),
-        decoder_resolution=(2, 2),
+        decoder_resolution=(6, 6),
         empty_cache=False,
         params=None
     ):
@@ -216,7 +216,7 @@ class SlotAttentionModel(pl.LightningModule):
         self.t_params_mlp = nn.Sequential(
             nn.Linear(self.slot_size, 2 * self.slot_size),
             nn.ReLU(),
-            nn.Linear(self.slot_size * 2, 4),
+            nn.Linear(self.slot_size * 2, 6),
         )
 
     def forward(self, x):
@@ -247,17 +247,18 @@ class SlotAttentionModel(pl.LightningModule):
         # `out` has shape: [batch_size*num_slots, num_channels+1, height, width].
         assert_shape(out.size(), (batch_size * num_slots, num_channels, height, width))
 
-        out = out.view(batch_size, num_slots, num_channels, height, width)
-        recons = out[:, :, :num_channels, :, :]
+        recons = out.reshape(batch_size, num_slots, num_channels, height, width)
+        recon_combined = torch.sum(recons, dim=1)
         transformed_recons = group_transformation(recons, params)
-        recon_combined = torch.sum(transformed_recons, dim=1)
-        return recon_combined, recons, transformed_recons, slots
+        transformed_recons_combined = torch.sum(transformed_recons, dim=1)
+        return recon_combined, recons, transformed_recons_combined, transformed_recons, slots
 
     def loss_function(self, input):
-        recon_combined, recons, rot_recons, slots = self.forward(input)
-        loss = F.mse_loss(recon_combined, input)
+        recon_combined, recons, transformed_recons_combined, transformed_recons, slots = self.forward(input)
+
+        reconstruction_loss = F.mse_loss(transformed_recons_combined, input)
         return {
-            "loss": loss,
+            "loss": reconstruction_loss
         }
 
     def configure_optimizers(self):
@@ -298,13 +299,14 @@ class SlotAttentionModel(pl.LightningModule):
         batch = next(iter(dl))[idx]
         if len(self.params.gpus) > 0:
             batch = batch.to(self.device)
-        recon_combined, recons, transformed_recons, slots = self.forward(batch)
+        recon_combined, recons, transformed_recons_combined, transformed_recons, slots = self.forward(batch)
 
         # combine images in a nice way so we can display all outputs in one grid, output rescaled to be between 0 and 1
         out = to_rgb_from_tensor(
             torch.cat(
                 [
                     batch.unsqueeze(1),  # original images
+                    transformed_recons_combined.unsqueeze(1),  # reconstructions
                     recon_combined.unsqueeze(1),  # reconstructions
                     recons,  # each slot
                     transformed_recons
@@ -314,8 +316,9 @@ class SlotAttentionModel(pl.LightningModule):
         )
 
         batch_size, num_slots, C, H, W = recons.shape
+        out = out.permute(1, 0, 2, 3, 4)
         images = vutils.make_grid(
-            out.view(batch_size * out.shape[1], C, H, W).cpu(), normalize=False, nrow=out.shape[1],
+            out.reshape(out.shape[0] * out.shape[1], C, H, W).cpu(), normalize=False, nrow=out.shape[1],
         )
 
         return images
