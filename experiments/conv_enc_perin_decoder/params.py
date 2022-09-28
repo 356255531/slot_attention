@@ -7,12 +7,12 @@ import attr
 @attr.s(auto_attribs=True)
 class SlotAttentionParams:
     lr: float = 0.0004
-    batch_size: int = 128
+    batch_size: int = 16
     val_batch_size: int = 128
     resolution: Tuple[int, int] = (96, 96)
     num_slots: int = 3
     num_iterations: int = 3
-    data_root: str = "data/commnist/"
+    data_root: str = "data/color_multi_mnist/"
     gpus: list = [0]
     max_epochs: int = 150
     num_sanity_val_steps: int = 1

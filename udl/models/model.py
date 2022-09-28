@@ -1,22 +1,21 @@
 from typing import Tuple
 
 import torch
-from torch import nn
 from torch import optim
 from torch.nn import functional as F
 from torchvision import utils as vutils
 
 import pytorch_lightning as pl
 
-from slot_attention.utils import Tensor
-from slot_attention.utils import assert_shape
-from slot_attention.utils import build_grid
-from slot_attention.utils import conv_transpose_out_shape
-from slot_attention.utils import group_transformation
-from slot_attention.utils import to_rgb_from_tensor
+from udl.utils import Tensor
+from udl.utils import assert_shape
+from udl.utils import build_grid
+from udl.utils import conv_transpose_out_shape
+from udl.utils import group_transformation
+from udl.utils import to_rgb_from_tensor
 
 
-class SlotAttention(nn.Module):
+class SlotAttention(torch.nn.Module):
     def __init__(self, in_features, num_iterations, num_slots, slot_size, mlp_hidden_size, epsilon=1e-8):
         super().__init__()
         self.in_features = in_features
@@ -26,31 +25,31 @@ class SlotAttention(nn.Module):
         self.mlp_hidden_size = mlp_hidden_size
         self.epsilon = epsilon
 
-        self.norm_inputs = nn.LayerNorm(self.in_features)
+        self.norm_inputs = torch.nn.LayerNorm(self.in_features)
         # I guess this is layer norm across each slot? should look into this
-        self.norm_slots = nn.LayerNorm(self.slot_size)
-        self.norm_mlp = nn.LayerNorm(self.slot_size)
+        self.norm_slots = torch.nn.LayerNorm(self.slot_size)
+        self.norm_mlp = torch.nn.LayerNorm(self.slot_size)
 
         # Linear maps for the attention module.
-        self.project_q = nn.Linear(self.slot_size, self.slot_size, bias=False)
-        self.project_k = nn.Linear(self.slot_size // 2, self.slot_size, bias=False)
-        self.project_v = nn.Linear(self.slot_size // 2, self.slot_size, bias=False)
+        self.project_q = torch.nn.Linear(self.slot_size, self.slot_size, bias=False)
+        self.project_k = torch.nn.Linear(self.slot_size // 2, self.slot_size, bias=False)
+        self.project_v = torch.nn.Linear(self.slot_size // 2, self.slot_size, bias=False)
 
         # Slot update functions.
-        self.gru = nn.GRUCell(self.slot_size, self.slot_size)
-        self.mlp = nn.Sequential(
-            nn.Linear(self.slot_size, self.mlp_hidden_size),
-            nn.ReLU(),
-            nn.Linear(self.mlp_hidden_size, self.slot_size),
+        self.gru = torch.nn.GRUCell(self.slot_size, self.slot_size)
+        self.mlp = torch.nn.Sequential(
+            torch.nn.Linear(self.slot_size, self.mlp_hidden_size),
+            torch.nn.ReLU(),
+            torch.nn.Linear(self.mlp_hidden_size, self.slot_size),
         )
 
         self.register_buffer(
             "slots_mu",
-            nn.init.xavier_uniform_(torch.zeros((1, 1, self.slot_size)), gain=nn.init.calculate_gain("linear")),
+            torch.nn.init.xavier_uniform_(torch.zeros((1, 1, self.slot_size)), gain=torch.nn.init.calculate_gain("linear")),
         )
         self.register_buffer(
             "slots_log_sigma",
-            nn.init.xavier_uniform_(torch.zeros((1, 1, self.slot_size)), gain=nn.init.calculate_gain("linear")),
+            torch.nn.init.xavier_uniform_(torch.zeros((1, 1, self.slot_size)), gain=torch.nn.init.calculate_gain("linear")),
         )
 
     def forward(self, inputs: Tensor):
@@ -135,30 +134,12 @@ class SlotAttentionModel(pl.LightningModule):
 
         self.out_features = self.hidden_dims[-1]
 
-        modules = []
-        channels = self.in_channels
-        # Build Encoder
-        for h_dim in self.hidden_dims:
-            modules.append(
-                nn.Sequential(
-                    nn.Conv2d(
-                        channels,
-                        out_channels=h_dim,
-                        kernel_size=self.kernel_size,
-                        stride=1,
-                        padding=self.kernel_size // 2,
-                    ),
-                    nn.LeakyReLU(),
-                )
-            )
-            channels = h_dim
-
-        self.encoder = nn.Sequential(*modules)
+        self.encoder = C8SteerableCNN()
         self.encoder_pos_embedding = SoftPositionEmbed(self.in_channels, self.out_features, resolution)
-        self.encoder_out_layer = nn.Sequential(
-            nn.Linear(self.out_features, self.out_features),
-            nn.LeakyReLU(),
-            nn.Linear(self.out_features, self.out_features),
+        self.encoder_out_layer = torch.nn.Sequential(
+            torch.nn.Linear(self.out_features, self.out_features),
+            torch.nn.LeakyReLU(),
+            torch.nn.Linear(self.out_features, self.out_features),
         )
 
         # Build Decoder
@@ -169,8 +150,8 @@ class SlotAttentionModel(pl.LightningModule):
 
         for i in range(len(self.hidden_dims) - 1, -1, -1):
             modules.append(
-                nn.Sequential(
-                    nn.ConvTranspose2d(
+                torch.nn.Sequential(
+                    torch.nn.ConvTranspose2d(
                         self.hidden_dims[i],
                         self.hidden_dims[i - 1],
                         kernel_size=5,
@@ -178,7 +159,7 @@ class SlotAttentionModel(pl.LightningModule):
                         padding=2,
                         output_padding=1,
                     ),
-                    nn.LeakyReLU(),
+                    torch.nn.LeakyReLU(),
                 )
             )
             out_size = conv_transpose_out_shape(out_size, 2, 2, 5, 1)
@@ -191,18 +172,18 @@ class SlotAttentionModel(pl.LightningModule):
 
         # same convolutions
         modules.append(
-            nn.Sequential(
-                nn.ConvTranspose2d(
+            torch.nn.Sequential(
+                torch.nn.ConvTranspose2d(
                     self.out_features, self.out_features, kernel_size=5, stride=1, padding=2, output_padding=0,
                 ),
-                nn.LeakyReLU(),
-                nn.ConvTranspose2d(self.out_features, 3, kernel_size=3, stride=1, padding=1, output_padding=0,),
+                torch.nn.LeakyReLU(),
+                torch.nn.ConvTranspose2d(self.out_features, 3, kernel_size=3, stride=1, padding=1, output_padding=0,),
             )
         )
 
         assert_shape(resolution, (out_size, out_size), message="")
 
-        self.decoder = nn.Sequential(*modules)
+        self.decoder = torch.nn.Sequential(*modules)
         self.decoder_pos_embedding = SoftPositionEmbed(self.in_channels, self.out_features, self.decoder_resolution)
 
         self.slot_attention = SlotAttention(
@@ -213,10 +194,10 @@ class SlotAttentionModel(pl.LightningModule):
             mlp_hidden_size=128,
         )
 
-        self.t_params_mlp = nn.Sequential(
-            nn.Linear(self.slot_size, 2 * self.slot_size),
-            nn.ReLU(),
-            nn.Linear(self.slot_size * 2, 6),
+        self.t_params_mlp = torch.nn.Sequential(
+            torch.nn.Linear(self.slot_size, 2 * self.slot_size),
+            torch.nn.ReLU(),
+            torch.nn.Linear(self.slot_size * 2, 6),
         )
 
     def forward(self, x):
@@ -336,10 +317,10 @@ class SlotAttentionModel(pl.LightningModule):
         print("; ".join([f"{k}: {v.item():.6f}" for k, v in logs.items()]))
 
 
-class SoftPositionEmbed(nn.Module):
+class SoftPositionEmbed(torch.nn.Module):
     def __init__(self, num_channels: int, hidden_size: int, resolution: Tuple[int, int]):
         super().__init__()
-        self.dense = nn.Linear(in_features=num_channels + 1, out_features=hidden_size)
+        self.dense = torch.nn.Linear(in_features=num_channels + 1, out_features=hidden_size)
         self.register_buffer("grid", build_grid(resolution))
 
     def forward(self, inputs: Tensor):

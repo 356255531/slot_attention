@@ -1,0 +1,1 @@
+from .color_multi_mnist import ColorMultiMinist, ColorMultiMinistTransforms

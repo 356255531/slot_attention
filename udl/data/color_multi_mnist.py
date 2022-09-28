@@ -7,7 +7,7 @@ from torch.utils.data import Dataset
 from torchvision.transforms import transforms
 
 
-class ComMnistDataset(Dataset):
+class ColorMultiMinist(Dataset):
     def __init__(
         self,
         data_root: str,
@@ -31,7 +31,7 @@ class ComMnistDataset(Dataset):
         return self.len
 
 
-class ComMnistTransforms(object):
+class ColorMultiMinistTransforms(object):
     def __init__(self, resolution: Tuple[int, int]):
         self.transforms = transforms.Compose(
             [

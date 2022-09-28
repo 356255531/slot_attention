@@ -1,6 +1,4 @@
 from typing import Optional
-import sys
-import os
 import numpy as np
 import random as rd
 
@@ -11,19 +9,15 @@ import pytorch_lightning.loggers as pl_loggers
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import LearningRateMonitor
 
-sys.path.append(os.getcwd())
-
-from slot_attention.data import ComMnistDataset, ComMnistTransforms
-from slot_attention.model import SlotAttentionModel
-from slot_attention.params import SlotAttentionParams
-from slot_attention.utils import ImageLogCallback
+from udl.data import ColorMultiMinist, ColorMultiMinistTransforms
+from udl.models.model import SlotAttentionModel
+from experiments.conv_enc_perin_decoder.params import SlotAttentionParams
+from udl.utils import ImageLogCallback
 
 
 def main(logger_name, params: Optional[SlotAttentionParams] = None):
     if params is None:
         params = SlotAttentionParams()
-
-    assert params.num_slots > 1, "Must have at least 2 slots."
 
     if params.is_verbose:
         print(f"INFO: limiting the dataset to only images with `num_slots - 1` ({params.num_slots - 1}) objects.")
@@ -33,9 +27,9 @@ def main(logger_name, params: Optional[SlotAttentionParams] = None):
             print(f"INFO: restricting the validation dataset size to `num_val_images`: {params.num_val_images}")
 
     # Define dataset
-    commnist_transforms = ComMnistTransforms(params.resolution)
+    commnist_transforms = ColorMultiMinistTransforms(params.resolution)
 
-    train_dataset = ComMnistDataset(
+    train_dataset = ColorMultiMinist(
             data_root=params.data_root,
             transforms=commnist_transforms,
             split="train",
@@ -48,7 +42,7 @@ def main(logger_name, params: Optional[SlotAttentionParams] = None):
         pin_memory=True,
     )
 
-    val_dataset = ComMnistDataset(
+    val_dataset = ColorMultiMinist(
             data_root=params.data_root,
             transforms=commnist_transforms,
             split="val",
@@ -73,7 +67,7 @@ def main(logger_name, params: Optional[SlotAttentionParams] = None):
         params=params,
     )
 
-    logger = pl_loggers.WandbLogger(project="slot_attention", name=logger_name)
+    logger = pl_loggers.WandbLogger(project="udl", name=logger_name)
 
     trainer = Trainer(
         logger=logger if params.is_logger_enabled else False,
@@ -92,4 +86,4 @@ if __name__ == "__main__":
     torch.manual_seed(seed)
     np.random.seed(seed)
     rd.seed(seed)
-    main(f"commnist96pixel_nonsymmetric_scale_rot_tsla_{seed}")
+    main(f"commnist96_e2cnn_scale_rot_tsla_{seed}")
