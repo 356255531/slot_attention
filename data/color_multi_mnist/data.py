@@ -10,7 +10,7 @@ SIZE = 64
 THRESHOLD = 28
 NONSYMMETRIC = True
 
-train_data = np.loadtxt('../source/mnist_all_rotation_normalized_float_train_valid.amat')
+train_data = np.loadtxt('../resource/mnist_all_rotation_normalized_float_train_valid.amat')
 if NONSYMMETRIC:
     train_data = train_data[train_data[:, -1] != 0]
     train_data = train_data[train_data[:, -1] != 1]
@@ -21,7 +21,7 @@ train_data = train_data[:, :-1]
 train_data = np.swapaxes(train_data.reshape(-1, 28, 28), 1, 2)
 train_data = torch.from_numpy(train_data)
 
-test_data = np.loadtxt('../source/mnist_all_rotation_normalized_float_test.amat')
+test_data = np.loadtxt('../resource/mnist_all_rotation_normalized_float_test.amat')
 if NONSYMMETRIC:
     test_data = test_data[test_data[:, -1] != 0]
     test_data = test_data[test_data[:, -1] != 1]
