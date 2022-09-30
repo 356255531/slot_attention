@@ -168,10 +168,9 @@ class DecoderCNNSmall(torch.nn.Module):
 
         h_conv = h.view(-1, 1, self.map_size[1], self.map_size[2])
         h = self.act3(self.deconv1(h_conv))
-        h = self.deconv2(h).view((-1, self.num_objects,) + h.shape[-2:])
-        import pdb
-        pdb.set_trace()
-        return self.deconv2(h)
+        out = self.deconv2(h)
+        out = out.view((-1, self.num_objects,) + out.shape[-3:]).sum(dim=1)
+        return out
 
 
 class DecoderCNNMedium(torch.nn.Module):
@@ -323,7 +322,7 @@ class ObjDisentangleAE(pl.LightningModule):
                 output_size=exp_params.data.img_dim)
 
     def forward(self, x):
-        return self.decoder(self.mlp_encoder(self.feat_extractor(x))).sum(dim=1)
+        return self.decoder(self.mlp_encoder(self.feat_extractor(x)))
 
     def training_step(self, x, batch_idx):
         return torch.nn.functional.mse_loss(self(x), x)
@@ -333,3 +332,34 @@ class ObjDisentangleAE(pl.LightningModule):
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.exp_params.train.lr)
+
+    def sample_images(self):
+        dl = self.val_dataloader
+        perm = torch.randperm(self.params.batch_size)
+        idx = perm[: self.params.n_samples]
+        batch = next(iter(dl))[idx]
+        if len(self.params.gpus) > 0:
+            batch = batch.to(self.device)
+        recon_combined, recons, transformed_recons_combined, transformed_recons, slots = self.forward(batch)
+
+        # combine images in a nice way so we can display all outputs in one grid, output rescaled to be between 0 and 1
+        out = to_rgb_from_tensor(
+            torch.cat(
+                [
+                    batch.unsqueeze(1),  # original images
+                    transformed_recons_combined.unsqueeze(1),  # reconstructions
+                    recon_combined.unsqueeze(1),  # reconstructions
+                    recons,  # each slot
+                    transformed_recons
+                ],
+                dim=1,
+            )
+        )
+
+        batch_size, num_slots, C, H, W = recons.shape
+        out = out.permute(1, 0, 2, 3, 4)
+        images = vutils.make_grid(
+            out.reshape(out.shape[0] * out.shape[1], C, H, W).cpu(), normalize=False, nrow=out.shape[1],
+        )
+
+        return images
