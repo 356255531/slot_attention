@@ -1,8 +1,12 @@
 import numpy as np
 import torch
 import pytorch_lightning as pl
+from torchvision import utils as vutils
+from math import sqrt
+import wandb
+import random as rd
 
-from udl.models.utils import get_act_fn, to_one_hot
+from .utils import get_act_fn, to_one_hot, to_rgb_from_tensor
 
 
 class EncoderCNNSmall(torch.nn.Module):
@@ -148,9 +152,9 @@ class DecoderCNNSmall(torch.nn.Module):
         self.ln = torch.nn.LayerNorm(hidden_dim)
 
         self.deconv1 = torch.nn.ConvTranspose2d(1, hidden_dim,
-                                          kernel_size=1, stride=1)
+                                                kernel_size=1, stride=1)
         self.deconv2 = torch.nn.ConvTranspose2d(hidden_dim, output_size[0],
-                                          kernel_size=10, stride=10)
+                                                kernel_size=10, stride=10)
 
         self.input_dim = input_dim
         self.num_objects = num_objects
@@ -189,10 +193,10 @@ class DecoderCNNMedium(torch.nn.Module):
         self.fc3 = torch.nn.Linear(hidden_dim, output_dim)
         self.ln = torch.nn.LayerNorm(hidden_dim)
 
-        self.deconv1 = torch.nn.ConvTranspose2d(num_objects, hidden_dim,
-                                          kernel_size=5, stride=5)
+        self.deconv1 = torch.nn.ConvTranspose2d(1, hidden_dim,
+                                                kernel_size=5, stride=5)
         self.deconv2 = torch.nn.ConvTranspose2d(hidden_dim, output_size[0],
-                                          kernel_size=9, padding=4)
+                                                kernel_size=9, padding=4)
 
         self.ln1 = torch.nn.BatchNorm2d(hidden_dim)
 
@@ -209,7 +213,7 @@ class DecoderCNNMedium(torch.nn.Module):
         h = self.act2(self.ln(self.fc2(h)))
         h = self.fc3(h)
 
-        h_conv = h.view(-1, self.num_objects, self.map_size[1],
+        h_conv = h.view(-1, 1, self.num_objects, self.map_size[1],
                         self.map_size[2])
         h = self.act3(self.ln1(self.deconv1(h_conv)))
         return self.deconv2(h)
@@ -232,13 +236,13 @@ class DecoderCNNLarge(torch.nn.Module):
         self.ln = torch.nn.LayerNorm(hidden_dim)
 
         self.deconv1 = torch.nn.ConvTranspose2d(num_objects, hidden_dim,
-                                          kernel_size=3, padding=1)
+                                                kernel_size=3, padding=1)
         self.deconv2 = torch.nn.ConvTranspose2d(hidden_dim, hidden_dim,
-                                          kernel_size=3, padding=1)
+                                                kernel_size=3, padding=1)
         self.deconv3 = torch.nn.ConvTranspose2d(hidden_dim, hidden_dim,
-                                          kernel_size=3, padding=1)
+                                                kernel_size=3, padding=1)
         self.deconv4 = torch.nn.ConvTranspose2d(hidden_dim, output_size[0],
-                                          kernel_size=3, padding=1)
+                                                kernel_size=3, padding=1)
 
         self.ln1 = torch.nn.BatchNorm2d(hidden_dim)
         self.ln2 = torch.nn.BatchNorm2d(hidden_dim)
@@ -324,50 +328,41 @@ class ObjDisentangleAE(pl.LightningModule):
     def __init__(self, exp_params):
         super().__init__()
         self.exp_params = exp_params
-        self.feat_extractor, self.mlp_encoder, self.decoder = get_modules(exp_params)
+        self.feat_extractor, self.mlp_encoder, self.decoder = \
+            get_modules(exp_params)
+        self.logger_args = {"prog_bar": True, "logger": True, "on_step": True, "on_epoch": True, "sync_dist": True}
 
     def forward(self, x):
+        torch.cuda.empty_cache()
         return self.decoder(self.mlp_encoder(self.feat_extractor(x)))
 
-    def _shared_loss(self, x):
-        torch.nn.functional.mse_loss(self(x), x)
+    def _reconstruction_loss(self, x):
+        return torch.nn.functional.mse_loss(self(x), x)
 
     def training_step(self, x, batch_idx):
-        return self._shared_loss(x)
+        train_loss = self._reconstruction_loss(x)
+        self.log("train_loss", train_loss, **self.logger_args)
+        return train_loss
 
     def validation_step(self, x, batch_idx):
-        return self._shared_loss(x)
+        x_pred = self(x)
+        reconstruction_loss = torch.nn.functional.mse_loss(x_pred, x)
+        return {"loss": reconstruction_loss, "x_pred": x_pred, "x": x}
+
+    def test_step(self, x, batch_idx):
+        return self._reconstruction_loss(x)
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.exp_params.train.lr)
 
-    def sample_images(self):
-        dl = self.val_dataloader
-        perm = torch.randperm(self.params.batch_size)
-        idx = perm[: self.params.n_samples]
-        batch = next(iter(dl))[idx]
-        if len(self.params.gpus) > 0:
-            batch = batch.to(self.device)
-        recon_combined, recons, transformed_recons_combined, transformed_recons, slots = self.forward(batch)
+    def validation_epoch_end(self, outputs):
+        self.log("val_loss", torch.mean(torch.tensor([output["loss"] for output in outputs])))
 
-        # combine images in a nice way so we can display all outputs in one grid, output rescaled to be between 0 and 1
-        out = to_rgb_from_tensor(
-            torch.cat(
-                [
-                    batch.unsqueeze(1),  # original images
-                    transformed_recons_combined.unsqueeze(1),  # reconstructions
-                    recon_combined.unsqueeze(1),  # reconstructions
-                    recons,  # each slot
-                    transformed_recons
-                ],
-                dim=1,
-            )
-        )
-
-        batch_size, num_slots, C, H, W = recons.shape
-        out = out.permute(1, 0, 2, 3, 4)
-        images = vutils.make_grid(
-            out.reshape(out.shape[0] * out.shape[1], C, H, W).cpu(), normalize=False, nrow=out.shape[1],
-        )
-
-        return images
+        sqrt_batch_size = int(sqrt(self.exp_params.train.visual_batch_size))
+        batch = rd.choice(outputs)
+        x_pred = batch["x_pred"][:sqrt_batch_size ** 2].cpu()
+        x = batch["x"][:sqrt_batch_size ** 2].cpu()
+        x = to_rgb_from_tensor(x)
+        pred_batch = vutils.make_grid(to_rgb_from_tensor(x_pred), normalize=False, nrow=sqrt_batch_size, )
+        x = vutils.make_grid(to_rgb_from_tensor(x), normalize=False, nrow=sqrt_batch_size, )
+        self.logger.experiment.log({"images": [wandb.Image(pred_batch), wandb.Image(x)]}, commit=False)

@@ -22,3 +22,7 @@ def to_one_hot(indices, max_index):
         indices.size()[0], max_index, dtype=torch.float32,
         device=indices.device)
     return zeros.scatter_(1, indices.unsqueeze(1), 1)
+
+
+def to_rgb_from_tensor(x: torch.Tensor):
+    return (x * 0.5 + 0.5).clamp(0, 1)
