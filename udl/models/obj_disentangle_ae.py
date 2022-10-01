@@ -267,68 +267,76 @@ class DecoderCNNLarge(torch.nn.Module):
         return self.deconv4(h)
 
 
+def get_modules(exp_params):
+    width_height = np.array(exp_params.data.img_dim[1:])
+    if exp_params.model.encoder == 'small':
+        feat_extractor = EncoderCNNSmall(
+            input_dim=exp_params.data.img_dim[0],
+            hidden_dim=exp_params.model.hidden_dim // 16,
+            num_objects=exp_params.data.num_objects)
+        # CNN image size changes
+        width_height //= 10
+    elif exp_params.model.encoder == 'medium':
+        feat_extractor = EncoderCNNMedium(
+            input_dim=exp_params.data.img_dim[0],
+            hidden_dim=exp_params.model.hidden_dim // 16,
+            num_objects=exp_params.data.num_objects)
+        # CNN image size changes
+        width_height //= 5
+    elif exp_params.model.encoder == 'large':
+        feat_extractor = EncoderCNNLarge(
+            input_dim=exp_params.data.img_dim[0],
+            hidden_dim=exp_params.model.hidden_dim // 16,
+            num_objects=exp_params.data.num_objects)
+    else:
+        raise ValueError(f"Encoder {exp_params.model.encoder} not exists!")
+
+    mlp_encoder = EncoderMLP(
+        input_dim=np.prod(width_height),
+        hidden_dim=exp_params.model.hidden_dim,
+        output_dim=exp_params.model.embedding_dim,
+        num_objects=exp_params.data.num_objects)
+
+    if exp_params.model.decoder == 'large':
+        decoder = DecoderCNNLarge(
+            input_dim=exp_params.model.embedding_dim,
+            num_objects=exp_params.data.num_objects,
+            hidden_dim=exp_params.model.hidden_dim // 16,
+            output_size=exp_params.data.img_dim)
+    elif exp_params.model.decoder == 'medium':
+        decoder = DecoderCNNMedium(
+            input_dim=exp_params.model.embedding_dim,
+            num_objects=exp_params.data.num_objects,
+            hidden_dim=exp_params.model.hidden_dim // 16,
+            output_size=exp_params.data.img_dim)
+    elif exp_params.model.decoder == 'small':
+        decoder = DecoderCNNSmall(
+            input_dim=exp_params.model.embedding_dim,
+            num_objects=exp_params.data.num_objects,
+            hidden_dim=exp_params.model.hidden_dim // 16,
+            output_size=exp_params.data.img_dim)
+    else:
+        raise ValueError(f"Decoder {exp_params.model.decoder} not exists!")
+    return feat_extractor, mlp_encoder, decoder
+
+
 class ObjDisentangleAE(pl.LightningModule):
     def __init__(self, exp_params):
         super().__init__()
-
         self.exp_params = exp_params
-
-        width_height = np.array(exp_params.data.img_dim[1:])
-        if exp_params.model.encoder == 'small':
-            self.feat_extractor = EncoderCNNSmall(
-                input_dim=exp_params.model.input_channels,
-                hidden_dim=exp_params.model.hidden_dim // 16,
-                num_objects=exp_params.data.num_objects)
-            # CNN image size changes
-            width_height //= 10
-        elif exp_params.model.encoder == 'medium':
-            self.feat_extractor = EncoderCNNMedium(
-                input_dim=exp_params.model.input_channels,
-                hidden_dim=exp_params.model.hidden_dim // 16,
-                num_objects=exp_params.data.num_objects)
-            # CNN image size changes
-            width_height //= 5
-        elif exp_params.model.encoder == 'large':
-            self.feat_extractor = EncoderCNNLarge(
-                input_dim=exp_params.model.input_channels,
-                hidden_dim=exp_params.model.hidden_dim // 16,
-                num_objects=exp_params.data.num_objects)
-        else:
-            raise ValueError(f"Encoder {exp_params.model.encoder} not exists!")
-
-        self.mlp_encoder = EncoderMLP(
-            input_dim=np.prod(width_height),
-            hidden_dim=exp_params.model.hidden_dim,
-            output_dim=exp_params.model.embedding_dim,
-            num_objects=exp_params.data.num_objects)
-
-        if exp_params.model.encoder == 'large':
-            self.decoder = DecoderCNNLarge(
-                input_dim=exp_params.model.embedding_dim,
-                num_objects=exp_params.data.num_objects,
-                hidden_dim=exp_params.model.hidden_dim // 16,
-                output_size=exp_params.data.img_dim)
-        elif exp_params.model.encoder == 'medium':
-            self.decoder = DecoderCNNMedium(
-                input_dim=exp_params.model.embedding_dim,
-                num_objects=exp_params.data.num_objects,
-                hidden_dim=exp_params.model.hidden_dim // 16,
-                output_size=exp_params.data.img_dim)
-        elif exp_params.model.encoder == 'small':
-            self.decoder = DecoderCNNSmall(
-                input_dim=exp_params.model.embedding_dim,
-                num_objects=exp_params.data.num_objects,
-                hidden_dim=exp_params.model.hidden_dim // 16,
-                output_size=exp_params.data.img_dim)
+        self.feat_extractor, self.mlp_encoder, self.decoder = get_modules(exp_params)
 
     def forward(self, x):
         return self.decoder(self.mlp_encoder(self.feat_extractor(x)))
 
+    def _shared_loss(self, x):
+        torch.nn.functional.mse_loss(self(x), x)
+
     def training_step(self, x, batch_idx):
-        return torch.nn.functional.mse_loss(self(x), x)
+        return self._shared_loss(x)
 
     def validation_step(self, x, batch_idx):
-        return torch.nn.functional.mse_loss(self(x), x)
+        return self._shared_loss(x)
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.exp_params.train.lr)

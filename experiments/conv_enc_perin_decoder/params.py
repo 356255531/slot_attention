@@ -1,8 +1,13 @@
 import os.path
-from typing import Optional
-from typing import Tuple
-
+from typing import List, Tuple, Optional
 import attr
+
+
+@attr.s(auto_attribs=True)
+class DeviceParams:
+    device_type: str = "gpu"
+    devices: List[int] = [0]
+    precision: int = 32
 
 
 @attr.s(auto_attribs=True)
@@ -16,23 +21,16 @@ class DataParams:
 
 @attr.s(auto_attribs=True)
 class ModelParams:
-    lr: float = 0.001
     encoder: str = "small"
-    input_channels: int = 3
+    decoder: str = "small"
     hidden_dim: int = 512
     embedding_dim: int = 128
-
-
-@attr.s(auto_attribs=True)
-class DeviceParams:
-    device_type: str = "gpu"
-    device:
+    checkpoint_path: str = None
 
 
 @attr.s(auto_attribs=True)
 class TrainParams:
     seed: int = 2023
-    gpus: list = [0]
     lr: float = 0.0004
     max_epochs: int = 150
     batch_size: int = 16
@@ -45,9 +43,10 @@ class TrainParams:
 
 @attr.s(auto_attribs=True)
 class LoggerParams:
-    logger: bool = True
+    logger: bool = False
     project: str = "unsupervised-multi-object-disentanglement"
     logger_name: str = "conv_encoder_perinvariant_decoder"
+    log_every_n_steps: int = 50
 
 
 @attr.s(auto_attribs=True)
@@ -62,5 +61,3 @@ class Params:
     weight_decay: float = 0.0
 
     empty_cache: bool = True
-    is_logger_enabled: bool = False
-    is_verbose: bool = True
