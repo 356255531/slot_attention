@@ -17,7 +17,7 @@ def main(params):
     )
     train_dataloader = DataLoader(
         train_dataset,
-        batch_size=params.train.batch_size,
+        batch_size=params.train.train_batch_size,
         shuffle=True,
         num_workers=params.train.num_workers,
         pin_memory=True,
@@ -53,7 +53,7 @@ def main(params):
     callbacks = [
         ModelCheckpoint(
             None,  # save to wandb logger dir
-            "{epoch}-{train_loss:.2f}-{val_loss:.2f}",
+            "{epoch}-{train_loss:.3f}-{val_loss:.3f}",
             save_last=True,
             monitor="val_loss",
             save_top_k=params.model.save_top_k,

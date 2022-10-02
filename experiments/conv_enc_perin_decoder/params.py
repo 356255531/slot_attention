@@ -14,37 +14,39 @@ class DeviceParams:
 class DataParams:
     img_dim: Tuple[int, int] = (3, 60, 60)
     data_root: str = join(abspath(__file__ + "/../../../"), "data/color_multi_mnist/")
-    num_objects: int = 3
-    num_train_images: Optional[int] = None
-    num_val_images: Optional[int] = None
+    num_objects: int = 4
 
 
 @attr.s(auto_attribs=True)
 class ModelParams:
-    encoder: str = "small"
-    decoder: str = "small"
+    encoder: str = "medium"
+    decoder: str = "medium"
     hidden_dim: int = 512
-    embedding_dim: int = 128
+    embedding_dim: int = 64
     checkpoint_path: str = None
-    every_n_epochs: int = 5
+    every_n_epochs: int = 10
     save_top_k: int = 5
 
 
 @attr.s(auto_attribs=True)
 class TrainParams:
     seed: int = 2023
-    lr: float = 0.0004
-    max_epochs: int = 150
-    batch_size: int = 16
+    max_epochs: int = 1000
+    # LR
+    lr: float = 10e-3
+    factor: float = 0.67
+    patience: int = 5
+    min_lr: float = 10e-7
+    # Batch size
+    train_batch_size: int = 128
     val_batch_size: int = 128
-    visual_batch_size: int = 64
+    visual_batch_size: int = 20
     test_batch_size: int = 128
+    # Dataloader
     num_workers: int = 8
+    # Early stop
     early_stop_patience: int = 10
     early_stop_mode: bool = "min"
-    warmup_steps_pct: float = 0.02
-    decay_steps_pct: float = 0.2
-    n_samples: int = 40
 
 
 @attr.s(auto_attribs=True)
@@ -64,8 +66,3 @@ class Params:
     model = ModelParams()
     train = TrainParams()
     logger = LoggerParams()
-
-    scheduler_gamma: float = 0.5
-    weight_decay: float = 0.0
-
-    empty_cache: bool = True

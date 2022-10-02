@@ -2,7 +2,6 @@ import numpy as np
 import torch
 import pytorch_lightning as pl
 from torchvision import utils as vutils
-from math import sqrt
 import wandb
 import random as rd
 
@@ -12,7 +11,7 @@ from .utils import get_act_fn, to_one_hot, to_rgb_from_tensor
 class EncoderCNNSmall(torch.nn.Module):
     """CNN encoder, maps observation to obj-specific feature maps."""
 
-    def __init__(self, input_dim, hidden_dim, num_objects, act_fn='sigmoid',
+    def __init__(self, input_dim, hidden_dim, num_objects, act_fn='relu',
                  act_fn_hid='relu'):
         super(EncoderCNNSmall, self).__init__()
         self.cnn1 = torch.nn.Conv2d(
@@ -30,8 +29,8 @@ class EncoderCNNSmall(torch.nn.Module):
 class EncoderCNNMedium(torch.nn.Module):
     """CNN encoder, maps observation to obj-specific feature maps."""
 
-    def __init__(self, input_dim, hidden_dim, num_objects, act_fn='sigmoid',
-                 act_fn_hid='leaky_relu'):
+    def __init__(self, input_dim, hidden_dim, num_objects, act_fn='relu',
+                 act_fn_hid='relu'):
         super(EncoderCNNMedium, self).__init__()
 
         self.cnn1 = torch.nn.Conv2d(
@@ -52,7 +51,7 @@ class EncoderCNNMedium(torch.nn.Module):
 class EncoderCNNLarge(torch.nn.Module):
     """CNN encoder, maps observation to obj-specific feature maps."""
 
-    def __init__(self, input_dim, hidden_dim, num_objects, act_fn='sigmoid',
+    def __init__(self, input_dim, hidden_dim, num_objects, act_fn='relu',
                  act_fn_hid='relu'):
         super(EncoderCNNLarge, self).__init__()
 
@@ -170,11 +169,12 @@ class DecoderCNNSmall(torch.nn.Module):
         h = self.act2(self.ln(self.fc2(h)))
         h = self.fc3(h)
 
-        h_conv = h.view(-1, 1, self.map_size[1], self.map_size[2])
+        h_conv = h.view(-1, self.map_size[1], self.map_size[2])
         h = self.act3(self.deconv1(h_conv))
         out = self.deconv2(h)
-        out = out.view((-1, self.num_objects,) + out.shape[-3:]).sum(dim=1)
-        return out
+        out = out.view((-1, self.num_objects,) + out.shape[-3:])
+        reconstruction = out.sum(dim=1)
+        return reconstruction, out
 
 
 class DecoderCNNMedium(torch.nn.Module):
@@ -213,10 +213,13 @@ class DecoderCNNMedium(torch.nn.Module):
         h = self.act2(self.ln(self.fc2(h)))
         h = self.fc3(h)
 
-        h_conv = h.view(-1, 1, self.num_objects, self.map_size[1],
+        h_conv = h.view(-1, 1, self.map_size[1],
                         self.map_size[2])
         h = self.act3(self.ln1(self.deconv1(h_conv)))
-        return self.deconv2(h)
+        out = self.deconv2(h)
+        out = out.view((-1, self.num_objects,) + out.shape[-3:])
+        reconstruction = out.sum(dim=1)
+        return reconstruction, out
 
 
 class DecoderCNNLarge(torch.nn.Module):
@@ -235,7 +238,7 @@ class DecoderCNNLarge(torch.nn.Module):
         self.fc3 = torch.nn.Linear(hidden_dim, output_dim)
         self.ln = torch.nn.LayerNorm(hidden_dim)
 
-        self.deconv1 = torch.nn.ConvTranspose2d(num_objects, hidden_dim,
+        self.deconv1 = torch.nn.ConvTranspose2d(1, hidden_dim,
                                                 kernel_size=3, padding=1)
         self.deconv2 = torch.nn.ConvTranspose2d(hidden_dim, hidden_dim,
                                                 kernel_size=3, padding=1)
@@ -263,12 +266,15 @@ class DecoderCNNLarge(torch.nn.Module):
         h = self.act2(self.ln(self.fc2(h)))
         h = self.fc3(h)
 
-        h_conv = h.view(-1, self.num_objects, self.map_size[1],
+        h_conv = h.view(-1, 1, self.map_size[1],
                         self.map_size[2])
         h = self.act3(self.ln1(self.deconv1(h_conv)))
         h = self.act4(self.ln1(self.deconv2(h)))
         h = self.act5(self.ln1(self.deconv3(h)))
-        return self.deconv4(h)
+        out = self.deconv4(h)
+        out = out.view((-1, self.num_objects,) + out.shape[-3:])
+        reconstruction = out.sum(dim=1)
+        return reconstruction, out
 
 
 def get_modules(exp_params):
@@ -328,6 +334,7 @@ class ObjDisentangleAE(pl.LightningModule):
     def __init__(self, exp_params):
         super().__init__()
         self.exp_params = exp_params
+
         self.feat_extractor, self.mlp_encoder, self.decoder = \
             get_modules(exp_params)
         self.logger_args = {"prog_bar": True, "logger": True, "on_step": True, "on_epoch": True, "sync_dist": True}
@@ -337,7 +344,7 @@ class ObjDisentangleAE(pl.LightningModule):
         return self.decoder(self.mlp_encoder(self.feat_extractor(x)))
 
     def _reconstruction_loss(self, x):
-        return torch.nn.functional.mse_loss(self(x), x)
+        return torch.nn.functional.mse_loss(self(x)[0], x)
 
     def training_step(self, x, batch_idx):
         train_loss = self._reconstruction_loss(x)
@@ -345,24 +352,46 @@ class ObjDisentangleAE(pl.LightningModule):
         return train_loss
 
     def validation_step(self, x, batch_idx):
-        x_pred = self(x)
-        reconstruction_loss = torch.nn.functional.mse_loss(x_pred, x)
-        return {"loss": reconstruction_loss, "x_pred": x_pred, "x": x}
+        reconstruction, slot_reconstruction = self(x)
+        return {
+            "loss": self._reconstruction_loss(x),
+            "x": x,
+            "reconstruction": reconstruction,
+            "slot_reconstruction": slot_reconstruction
+        }
 
     def test_step(self, x, batch_idx):
         return self._reconstruction_loss(x)
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.exp_params.train.lr)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.exp_params.train.lr)
+        lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, "min",
+            factor=self.exp_params.train.factor,
+            patience=self.exp_params.train.patience,
+            min_lr=self.exp_params.train.min_lr,
+        )
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler_config": {
+                "scheduler": lr_scheduler,
+                "interval": "epoch",
+                "frequency": 1,
+                "monitor": "val_loss",
+                "strict": True
+            }
+        }
 
     def validation_epoch_end(self, outputs):
         self.log("val_loss", torch.mean(torch.tensor([output["loss"] for output in outputs])))
 
-        sqrt_batch_size = int(sqrt(self.exp_params.train.visual_batch_size))
         batch = rd.choice(outputs)
-        x_pred = batch["x_pred"][:sqrt_batch_size ** 2].cpu()
-        x = batch["x"][:sqrt_batch_size ** 2].cpu()
-        x = to_rgb_from_tensor(x)
-        pred_batch = vutils.make_grid(to_rgb_from_tensor(x_pred), normalize=False, nrow=sqrt_batch_size, )
-        x = vutils.make_grid(to_rgb_from_tensor(x), normalize=False, nrow=sqrt_batch_size, )
-        self.logger.experiment.log({"images": [wandb.Image(pred_batch), wandb.Image(x)]}, commit=False)
+        while batch["x"].shape[0] < self.exp_params.train.visual_batch_size:
+            batch = rd.choice(outputs)
+        x = batch["x"][:self.exp_params.train.visual_batch_size].unsqueeze(1)
+        reconstruction = batch["reconstruction"][:self.exp_params.train.visual_batch_size].unsqueeze(1)
+        slot_reconstruction = batch["slot_reconstruction"][:self.exp_params.train.visual_batch_size]
+        imgs = to_rgb_from_tensor(torch.cat([x, reconstruction, slot_reconstruction], dim=1))
+        imgs = torch.permute(imgs, (1, 0, 2, 3, 4)).reshape((-1,) + imgs.shape[-3:])
+        imgs = vutils.make_grid(imgs, normalize=False, nrow=self.exp_params.train.visual_batch_size,)
+        self.logger.experiment.log({"images": [wandb.Image(imgs)]}, commit=False)
